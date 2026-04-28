@@ -15,7 +15,7 @@ int main()
             // Get IA move
             GameMove gameMove;
             game.getMove(gameMove);
-            std::cerr << "IA moooooove " << gameMove.row << " " << gameMove.col << std::endl;
+            std::cerr << "IA move " << gameMove.row << " " << gameMove.col << std::endl;
 
             // Send your move
             std::cerr << "Send move " << myMove.row << " " << myMove.col << std::endl;
