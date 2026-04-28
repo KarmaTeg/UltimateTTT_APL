@@ -37,12 +37,17 @@
 			<Add option="allegro-5.2.dll" />
 			<Add library="./libUTTTLib.a" />
 		</Linker>
+		<Unit filename="Common.h" />
+		<Unit filename="Move.h" />
+		<Unit filename="Player.h" />
+		<Unit filename="RandomPlayer.cpp" />
+		<Unit filename="RandomPlayer.h" />
+		<Unit filename="SubGrid.cpp" />
+		<Unit filename="SubGrid.h" />
+		<Unit filename="UltimateBoard.cpp" />
+		<Unit filename="UltimateBoard.h" />
 		<Unit filename="main.cpp" />
 		<Unit filename="main.h" />
-		<Extensions>
-			<code_completion />
-			<envvars />
-			<debugger />
-		</Extensions>
+		<Extensions />
 	</Project>
 </CodeBlocks_project_file>

@@ -7,12 +7,10 @@
 
 // --- Fonctions de conversion ---
 
-// Convertit notre format (Macro/Micro) vers le format de la lib du prof (Row/Col 0-8)
 GameMove convertToGameMove(const Move& m) {
     return {m.macroR * 3 + m.microR, m.macroC * 3 + m.microC};
 }
 
-// Convertit le format de la lib du prof (Row/Col 0-8) vers notre format (Macro/Micro)
 Move convertToMyMove(const GameMove& gm) {
     return Move(gm.row / 3, gm.col / 3, gm.row % 3, gm.col % 3);
 }
@@ -21,58 +19,64 @@ Move convertToMyMove(const GameMove& gm) {
 
 int main()
 {
-    // Initialisation de l'aléatoire pour notre IA Random
     std::srand(std::time(nullptr));
 
-    // Game initialization : 10 parties, niveau Facile 1, mode Debug, on joue en second (false)
-    game.initialize(10, Level::EASY_1, Mode::DEBUG, false, "Equipe_A3_Random");
+    // IMPORTANT : On définit ici si on joue en premier ou en second.
+    // false = L'IA du prof joue en premier. true = Notre IA joue en premier.
+    bool wePlayFirst = false;
 
-    // Création de notre IA (on utilise les 'O' car l'IA adverse joue en premier avec les 'X')
-    RandomPlayer monIA("RandomBot", Symbol::O);
+    game.initialize(10, Level::EASY_1, Mode::DEBUG, wePlayFirst, "Equipe_A3_Random");
+
+    // Création de notre IA (on prend 'O' si on joue en second, 'X' si on joue en premier)
+    Symbol mySymbol = wePlayFirst ? Symbol::X : Symbol::O;
+    Symbol oppSymbol = wePlayFirst ? Symbol::O : Symbol::X;
+    RandomPlayer monIA("RandomBot", mySymbol);
 
     while (!game.isAllGameFinish())
     {
-        // À chaque nouvelle partie, on instancie un plateau vierge en mémoire
         UltimateBoard internalBoard;
+
+        // On initialise le tour actuel en fonction des paramètres de départ
+        bool myTurn = wePlayFirst;
 
         while (!game.isFinish())
         {
-            // 1. Récupération du coup adverse depuis la librairie
-            GameMove opponentMoveRaw;
-            game.getMove(opponentMoveRaw);
+            if (myTurn)
+            {
+                // --- C'EST NOTRE TOUR ---
+                Move myMove = monIA.chooseMove(internalBoard);
 
-            std::cerr << "Coup recu de l'IA adverse : [" << opponentMoveRaw.row << ", " << opponentMoveRaw.col << "]" << std::endl;
+                if (myMove.macroR != -1) { // Sécurité si un coup valide a été trouvé
+                    internalBoard.makeMove(myMove, mySymbol); // Mise à jour de notre mémoire
 
-            // On vérifie que le coup de l'adversaire est valide (>= 0).
-            // C'est une sécurité au cas où la librairie envoie des coordonnées négatives au premier tour si vous deviez jouer en premier.
-            if (opponentMoveRaw.row >= 0 && opponentMoveRaw.col >= 0) {
-                Move opponentMove = convertToMyMove(opponentMoveRaw);
-                // L'IA adverse utilise toujours le symbole X lorsqu'elle joue en premier
-                internalBoard.makeMove(opponentMove, Symbol::X);
+                    GameMove myMoveRaw = convertToGameMove(myMove);
+                    std::cerr << "Coup envoye par notre IA : [" << myMoveRaw.row << ", " << myMoveRaw.col << "]" << std::endl;
+
+                    game.setMove(myMoveRaw); // On envoie le coup à la librairie
+                }
+
+                myTurn = false; // Fin de notre tour, on passe la main
             }
+            else
+            {
+                // --- C'EST LE TOUR DE L'ADVERSAIRE ---
+                GameMove opponentMoveRaw;
 
-            // 2. Notre IA analyse notre plateau interne mis à jour et décide d'un coup
-            Move myMove = monIA.chooseMove(internalBoard);
+                // On écoute la librairie. Le 'if' bloque tant que l'adversaire n'a pas joué
+                if (game.getMove(opponentMoveRaw))
+                {
+                    std::cerr << "Coup recu de l'IA adverse : [" << opponentMoveRaw.row << ", " << opponentMoveRaw.col << "]" << std::endl;
 
-            // Sécurité : si notre IA ne trouve aucun coup, on évite un crash
-            if (myMove.macroR == -1) {
-                std::cerr << "Erreur : Aucun coup valide trouve par l'IA interne !" << std::endl;
-                break;
+                    Move opponentMove = convertToMyMove(opponentMoveRaw);
+                    internalBoard.makeMove(opponentMove, oppSymbol); // Mise à jour de notre mémoire
+
+                    myTurn = true; // L'adversaire a joué, c'est à nous !
+                }
             }
-
-            // 3. On enregistre notre propre coup sur notre simulateur interne
-            internalBoard.makeMove(myMove, monIA.getSymbol());
-
-            // 4. On convertit notre coup et on le transmet à la librairie du prof
-            GameMove myMoveRaw = convertToGameMove(myMove);
-            std::cerr << "Coup envoye par notre IA : [" << myMoveRaw.row << ", " << myMoveRaw.col << "]" << std::endl;
-
-            game.setMove(myMoveRaw);
         }
-
         std::cerr << "--- Fin d'une partie ---" << std::endl;
     }
 
-    std::cerr << "--- Fin du match ---" << std::endl;
+    std::cerr << "--- Fin du match complet ---" << std::endl;
     return 0;
 }
