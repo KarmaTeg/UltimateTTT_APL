@@ -1,82 +1,56 @@
-#include <iostream>
-#include <cstdlib>
-#include <ctime>
 #include "main.h"
-#include "UltimateBoard.h"
-#include "RandomPlayer.h"
-
-// --- Fonctions de conversion ---
-
-GameMove convertToGameMove(const Move& m) {
-    return {m.macroR * 3 + m.microR, m.macroC * 3 + m.microC};
-}
-
-Move convertToMyMove(const GameMove& gm) {
-    return Move(gm.row / 3, gm.col / 3, gm.row % 3, gm.col % 3);
-}
-
-// --- Fonction principale ---
+#include "GameBoard.h"
+#include "GameRules.h"
+#include "MyIA.h"
+#include <iostream>
 
 int main()
 {
-    std::srand(std::time(nullptr));
+    // Start 10 games against EASY_1 in DEBUG mode
+    game.initialize(10, Level::EASY_1, Mode::ARENA, false, "YourPseudo");
 
-    // IMPORTANT : On d�finit ici si on joue en premier ou en second.
-    // false = L'IA du prof joue en premier. true = Notre IA joue en premier.
-    bool wePlayFirst = false;
-
-    game.initialize(10, Level::EASY_1, Mode::DEBUG, wePlayFirst, "Equipe_A3_Random");
-
-    // Cr�ation de notre IA (on prend 'O' si on joue en second, 'X' si on joue en premier)
-    Symbol mySymbol = wePlayFirst ? Symbol::X : Symbol::O;
-    Symbol oppSymbol = wePlayFirst ? Symbol::O : Symbol::X;
-    RandomPlayer monIA("RandomBot", mySymbol);
-
-    while (!game.isAllGameFinish())
+    while (!game.isAllGameFinish())  // repeat until all 10 games are done
     {
-        UltimateBoard internalBoard;
+        // Fresh board at the start of each new game
+        GameState state;
 
-        // On initialise le tour actuel en fonction des param�tres de d�part
-        bool myTurn = wePlayFirst;
-
-        while (!game.isFinish())
+        while (!game.isFinish())  // repeat until this single game is done
         {
-            if (myTurn)
-            {
-                // --- C'EST NOTRE TOUR ---
-                Move myMove = monIA.chooseMove(internalBoard);
+            // ── STEP 1 : get the opponent's move ──────────────────────
+            // The engine fills iaGameMove with where the opponent just played
+            // If the opponent hasn't moved yet (we go first), row stays -1
+            GameMove iaGameMove;
+            game.getMove(iaGameMove);
 
-                if (myMove.macroR != -1) { // S�curit� si un coup valide a �t� trouv�
-                    internalBoard.makeMove(myMove, mySymbol); // Mise � jour de notre m�moire
-
-                    GameMove myMoveRaw = convertToGameMove(myMove);
-                    std::cerr << "Coup envoye par notre IA : [" << myMoveRaw.row << ", " << myMoveRaw.col << "]" << std::endl;
-
-                    game.setMove(myMoveRaw); // On envoie le coup � la librairie
-                }
-
-                myTurn = false; // Fin de notre tour, on passe la main
+            if (iaGameMove.row != -1) {
+                // Convert from flat (0-8) to our internal format
+                Move iaMove = Move::fromGameMove(iaGameMove);
+                // Update our internal board so we know where they played
+                GameRules::playMove(state, iaMove);
             }
-            else
-            {
-                // --- C'EST LE TOUR DE L'ADVERSAIRE ---
-                GameMove opponentMoveRaw;
 
-                // On �coute la librairie. Le 'if' bloque tant que l'adversaire n'a pas jou�
-                if (game.getMove(opponentMoveRaw))
-                {
-                    std::cerr << "Coup recu de l'IA adverse : [" << opponentMoveRaw.row << ", " << opponentMoveRaw.col << "]" << std::endl;
+            // ── STEP 2 : check if game ended after opponent's move ────
+            if (game.isFinish()) break;
 
-                    Move opponentMove = convertToMyMove(opponentMoveRaw);
-                    internalBoard.makeMove(opponentMove, oppSymbol); // Mise � jour de notre m�moire
+            // ── STEP 3 : compute our best move ───────────────────────
+            // MyIA looks at the current state and returns the best move
+            Move myMove = MyIA::getMove(state);
 
-                    myTurn = true; // L'adversaire a jou�, c'est � nous !
-                }
-            }
+            // Update our internal board with our own move
+            GameRules::playMove(state, myMove);
+
+            // ── STEP 4 : send our move to the engine ─────────────────
+            // Convert from our internal format back to flat (0-8)
+            GameMove myGameMove = myMove.toGameMove();
+            game.setMove(myGameMove);
         }
-        std::cerr << "--- Fin d'une partie ---" << std::endl;
+
+        // Print result of this game
+        Winner w = game.getWinner();
+        if      (w == Winner::PLAYER)        std::cout << ">>> YourPseudo won\n";
+        else if (w == Winner::IA)            std::cout << ">>> IA won\n";
+        else if (w == Winner::IA_AND_PLAYER) std::cout << ">>> Draw\n";
     }
 
-    std::cerr << "--- Fin du match complet ---" << std::endl;
     return 0;
 }
