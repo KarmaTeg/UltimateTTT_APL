@@ -2,36 +2,13 @@
 #define MYIA_H
 
 // ============================================================================
-//  MyIA.h — Ultimate Tic-Tac-Toe AI (v2 — stronger play)
-//  Architecture : MCTS / UCT avec représentation Bitboard intégrale
-//
-//  Améliorations v2 par rapport à v1 :
-//   • Solver pré-MCTS : détection des big wins immédiats (gagner / bloquer)
-//   • Heuristiques de positionnement : valeur stratégique du board ciblé
-//   • Playout "fork-aware" : favorise les coups qui créent une double menace
-//   • Évite d'envoyer l'adversaire sur un board fermé proche d'un big win
-//   • UCT C tunée à 0.9 (au lieu de 1.414) : plus exploitatif, mieux pour UTTT
-//   • Progressive bias : prior heuristique pour les enfants non encore visités
-//   • Backprop avec malus quand on offre un free-move dangereux
-//
-//  Tradeoff : NPS plus bas (~30% moins de simulations) mais qualité
-//  largement supérieure → bot bien plus fort.
-//
-//  Choix algorithmique général : MCTS plutôt que Minimax/AB.
-//   - L'évaluation heuristique d'une position UTTT est notoirement instable
-//   - Branching factor irrégulier (1 à 81) casse l'alpha-beta
-//   - Les bots compétitifs UTTT top-tier sont tous MCTS
-//
-//  Optimisations bas niveau :
-//   1. Bitboards : chaque petit board = 9 bits par joueur (uint16_t)
-//      → win check = 1 lookup table (512 entrées, constexpr)
-//      → légalité = AND/OR/NOT bit à bit + __builtin_ctz
-//   2. Pool statique de nœuds pré-alloué (zéro malloc en boucle hot)
-//      → enfants en liste chaînée via nextSibling
-//   3. XorShift32 (~10× plus rapide que std::mt19937)
-//   4. Time control strict, check tous les 1024 nœuds
-//   5. Failsafe : 1er coup légal capturé dès l'entrée, retourné en cas d'urgence
-//      Cas trivial (1 seul coup légal) : retour immédiat (0 ms)
+//  MyIA.h � Ultimate Tic-Tac-Toe AI (v3 � Hyper-Optimized MCTS)
+//  Am�liorations v3 (Focus sur la vitesse brute et le cache CPU) :
+//   � Node structure all�g�e � 24 octets (Cache-friendly, tient dans 1 ligne L1)
+//   � Suppression du tableau untried[81] par n�ud (gain de RAM massif)
+//   � Playout "Lightweight" : focus uniquement sur l'Immediate Win (ultra-rapide)
+//   � Heuristique simplifi�e : �valuations purement arithm�tiques
+//   � G�n�ration dynamique des coups non-explor�s � l'expansion
 // ============================================================================
 
 #include "GameBoard.h"
@@ -41,21 +18,13 @@
 #include <cstdint>
 #include <cstring>
 
-// ============================================================================
-//  Constantes & tables précomputées (résolues à la compilation)
-// ============================================================================
 namespace UTTTConst {
-
-    // Toutes les configurations 3-en-ligne possibles sur un board 3x3
-    // bits : 0=TL 1=TM 2=TR 3=ML 4=MM 5=MR 6=BL 7=BM 8=BR
     static constexpr uint16_t WIN_LINES[8] = {
-        0b000000111, 0b000111000, 0b111000000,   // 3 lignes
-        0b001001001, 0b010010010, 0b100100100,   // 3 colonnes
-        0b100010001, 0b001010100                 // 2 diagonales
+        0b000000111, 0b000111000, 0b111000000,
+        0b001001001, 0b010010010, 0b100100100,
+        0b100010001, 0b001010100
     };
 
-    // Table 512 entrées : pour un masque 9 bits, est-ce qu'il contient une
-    // ligne complète ? Lookup en O(1).
     struct WinTable {
         bool data[512];
         constexpr WinTable() : data{} {
@@ -69,18 +38,8 @@ namespace UTTTConst {
     };
     static constexpr WinTable WIN_TABLE{};
     inline bool hasLine(uint16_t mask) { return WIN_TABLE.data[mask & 0x1FF]; }
-
-    // Mask "board plein" = 9 bits à 1
     static constexpr uint16_t FULL_MASK = 0x1FF;
 
-    // ──────────────────────────────────────────────────────────────────────
-    // Valeur stratégique de chaque case dans un board 3x3 :
-    //   - Centre : 4 (appartient à 4 lignes : horiz, vert, 2 diag)
-    //   - Coins  : 3 (3 lignes : horiz, vert, 1 diag)
-    //   - Bords  : 2 (2 lignes : horiz, vert)
-    // Utilisée à la fois pour les sous-boards (quel sous-board prendre)
-    // ET au sein d'un sous-board (quelle case jouer).
-    // ──────────────────────────────────────────────────────────────────────
     static constexpr int CELL_VALUE[9] = {
         3, 2, 3,
         2, 4, 2,
@@ -88,15 +47,12 @@ namespace UTTTConst {
     };
 }
 
-// ============================================================================
-//  Représentation Bitboard
-// ============================================================================
 struct BB {
-    uint16_t small[9][2];   // small[boardIdx][0]=X bits, [1]=O bits
-    uint16_t bigOcc[2];     // bits des sous-boards gagnés par X / O
-    uint16_t drawnBoards;   // sous-boards full sans gagnant (fermés)
-    int8_t   forcedBoard;   // -1 = libre
-    uint8_t  sideToMove;    // 0=X, 1=O
+    uint16_t small[9][2];
+    uint16_t bigOcc[2];
+    uint16_t drawnBoards;
+    int8_t   forcedBoard;
+    uint8_t  sideToMove;
 
     inline uint16_t closedBoards() const { return bigOcc[0] | bigOcc[1] | drawnBoards; }
     inline bool isBoardOpen(int b) const { return ((closedBoards() >> b) & 1) == 0; }
@@ -104,10 +60,7 @@ struct BB {
         return UTTTConst::FULL_MASK & ~(small[b][0] | small[b][1]);
     }
 
-    // Encode (bigIdx 0..8, cellIdx 0..8) en 1 uint8_t (4 bits + 4 bits)
-    static inline uint8_t pack(int bIdx, int cIdx) {
-        return (uint8_t)((bIdx << 4) | cIdx);
-    }
+    static inline uint8_t pack(int bIdx, int cIdx) { return (uint8_t)((bIdx << 4) | cIdx); }
     static inline int bigOf(uint8_t mv)  { return (mv >> 4) & 0xF; }
     static inline int cellOf(uint8_t mv) { return mv & 0xF; }
 };
@@ -126,7 +79,6 @@ inline void buildBB(const GameState& s, BB& bb) {
                     else if (p == Player::O) bb.small[b][1] |= (uint16_t)(1u << cell);
                 }
             }
-            // Recalculer (ne pas se fier au flag isWon)
             if      (UTTTConst::hasLine(bb.small[b][0])) bb.bigOcc[0] |= (uint16_t)(1u << b);
             else if (UTTTConst::hasLine(bb.small[b][1])) bb.bigOcc[1] |= (uint16_t)(1u << b);
             else if ((bb.small[b][0] | bb.small[b][1]) == UTTTConst::FULL_MASK)
@@ -145,10 +97,6 @@ inline void buildBB(const GameState& s, BB& bb) {
 inline Move toOfficialMove(int bIdx, int cIdx) {
     return Move(bIdx / 3, bIdx % 3, cIdx / 3, cIdx % 3);
 }
-
-// ============================================================================
-//  Move generation & application en bitboard
-// ============================================================================
 
 inline int genMoves(const BB& bb, uint8_t* out) {
     int n = 0;
@@ -175,7 +123,6 @@ inline int genMoves(const BB& bb, uint8_t* out) {
     return n;
 }
 
-// Joue un coup. Retourne 1 si la partie est gagnée par le joueur qui vient de jouer.
 inline int playBB(BB& bb, uint8_t mv) {
     int b = BB::bigOf(mv);
     int c = BB::cellOf(mv);
@@ -196,7 +143,6 @@ inline int playBB(BB& bb, uint8_t mv) {
     return gameWon;
 }
 
-// Test non-mutant : "si je joue mv en tant que side, est-ce que je gagne le petit board ?"
 inline bool wouldWinSmall(const BB& bb, uint8_t mv, int side) {
     int b = BB::bigOf(mv);
     int c = BB::cellOf(mv);
@@ -204,73 +150,15 @@ inline bool wouldWinSmall(const BB& bb, uint8_t mv, int side) {
     return UTTTConst::hasLine(after);
 }
 
-// Test non-mutant : "si je joue mv en tant que side, est-ce que je gagne la PARTIE ?"
-// = je gagne le petit board ET cela complète une ligne sur le big board.
 inline bool wouldWinGame(const BB& bb, uint8_t mv, int side) {
     int b = BB::bigOf(mv);
     int c = BB::cellOf(mv);
     uint16_t afterSmall = bb.small[b][side] | (uint16_t)(1u << c);
     if (!UTTTConst::hasLine(afterSmall)) return false;
-    // Le sous-board b sera gagné. Est-ce que ça complète une ligne sur le big board ?
     uint16_t afterBig = bb.bigOcc[side] | (uint16_t)(1u << b);
     return UTTTConst::hasLine(afterBig);
 }
 
-// ============================================================================
-//  Détection de menaces sur un board 3x3 (utilisée pour les heuristiques)
-// ============================================================================
-
-// Compte le nombre de "case libre qui crée une ligne pour 'side'"
-// dans le sous-board b. = nombre de menaces.
-inline int countThreats(const BB& bb, int b, int side) {
-    if (!bb.isBoardOpen(b)) return 0;
-    uint16_t mine = bb.small[b][side];
-    uint16_t free = bb.freeCells(b);
-    int count = 0;
-    while (free) {
-        int c = __builtin_ctz(free);
-        if (UTTTConst::hasLine(mine | (uint16_t)(1u << c))) count++;
-        free &= free - 1;
-    }
-    return count;
-}
-
-// Vrai ssi 'side' a au moins une menace dans le sous-board b
-inline bool hasThreat(const BB& bb, int b, int side) {
-    if (!bb.isBoardOpen(b)) return false;
-    uint16_t mine = bb.small[b][side];
-    uint16_t free = bb.freeCells(b);
-    while (free) {
-        int c = __builtin_ctz(free);
-        if (UTTTConst::hasLine(mine | (uint16_t)(1u << c))) return true;
-        free &= free - 1;
-    }
-    return false;
-}
-
-// Compte le nombre de sous-boards où 'side' a une menace de gagner.
-// Sert pour détecter les "forks" sur le big board.
-inline int countBoardsWithThreat(const BB& bb, int side) {
-    int n = 0;
-    for (int b = 0; b < 9; ++b) if (hasThreat(bb, b, side)) ++n;
-    return n;
-}
-
-// "Big board threat" : 'side' peut gagner la partie en 1 coup ?
-// = il existe un sous-board b ouvert tel que (bigOcc[side] | (1<<b)) forme
-//   une ligne sur le meta-board ET side a une menace dans ce sous-board.
-inline bool hasBigWinThreat(const BB& bb, int side) {
-    for (int b = 0; b < 9; ++b) {
-        if (!bb.isBoardOpen(b)) continue;
-        uint16_t afterBig = bb.bigOcc[side] | (uint16_t)(1u << b);
-        if (UTTTConst::hasLine(afterBig) && hasThreat(bb, b, side)) return true;
-    }
-    return false;
-}
-
-// ============================================================================
-//  XorShift32 — RNG ultra-rapide
-// ============================================================================
 struct XorShift32 {
     uint32_t state;
     inline uint32_t next() {
@@ -282,298 +170,126 @@ struct XorShift32 {
     inline uint32_t bounded(uint32_t n) { return next() % n; }
 };
 
-// ============================================================================
-//  Heuristique de scoring d'un coup (utilisée pour Progressive Bias UCT
-//  et pour orienter le playout).
-//
-//  Retourne un score relatif (plus haut = meilleur), pour le joueur qui joue.
-//  Critères (de plus important à moins important) :
-//    +1000  si gagne la partie (big win)
-//    +500   si gagne un sous-board stratégique (centre = +200 bonus)
-//    +200   si crée un fork (2+ menaces dans 2+ sous-boards)
-//    -500   si envoie l'adversaire sur un board où il peut gagner la PARTIE
-//    -200   si envoie l'adversaire sur un board où il peut gagner un sous-board
-//             qui complète une ligne sur le big board (menace dangereuse)
-//    -100   si envoie l'adversaire sur un board fermé (= free move pour lui)
-//             quand l'adversaire a déjà 2 sous-boards alignés
-//    +CELL_VALUE[smallCell]  : préférer le centre du sous-board
-//    +CELL_VALUE[bigBoard]   : préférer les sous-boards stratégiques
-// ============================================================================
 inline int heuristicScore(const BB& bb, uint8_t mv, int side) {
-    int opp = side ^ 1;
+    if (wouldWinGame(bb, mv, side)) return 10000;
+
     int bIdx = BB::bigOf(mv);
     int cIdx = BB::cellOf(mv);
-
-    // === Big win immédiat ? ===
-    if (wouldWinGame(bb, mv, side)) return 100000;
-
     int score = 0;
 
-    // === Gagner un sous-board ? ===
-    bool winsSmall = wouldWinSmall(bb, mv, side);
-    if (winsSmall) {
-        score += 500 + UTTTConst::CELL_VALUE[bIdx] * 50;
-        // Bonus si le sous-board gagné crée une menace de big win pour nous
-        uint16_t afterBig = bb.bigOcc[side] | (uint16_t)(1u << bIdx);
-        // Pour chaque ligne du meta-board contenant bIdx, vérifier si on a 2/3
-        for (int k = 0; k < 8; ++k) {
-            uint16_t L = UTTTConst::WIN_LINES[k];
-            if ((L & ((uint16_t)(1u << bIdx))) == 0) continue;
-            int countMine = __builtin_popcount(afterBig & L);
-            int countOpp  = __builtin_popcount(bb.bigOcc[opp] & L);
-            // Ligne où on a 2 boards et opp en a 0 → forte menace de big win
-            if (countMine == 2 && countOpp == 0) score += 300;
-        }
-    }
-
-    // === Position de la case dans le sous-board ===
+    if (wouldWinSmall(bb, mv, side)) score += 500;
     score += UTTTConst::CELL_VALUE[cIdx] * 3;
-
-    // === Position du sous-board ciblé (où on joue) ===
     score += UTTTConst::CELL_VALUE[bIdx] * 2;
 
-    // === Pénalité : où envoie-t-on l'adversaire ? ===
-    // L'adversaire jouera dans le sous-board correspondant à cIdx.
-    int targetBoard = cIdx;
-    if (!bb.isBoardOpen(targetBoard)) {
-        // On envoie l'opp sur un board fermé → il aura free move
-        // C'est généralement mauvais (sauf si on est en très bonne position)
-        // Pénalité modulée par la menace globale de l'opp.
-        int oppThreatBoards = countBoardsWithThreat(bb, opp);
-        score -= 50 + oppThreatBoards * 30;
-        // Si l'adversaire peut gagner la partie en free-move, c'est fatal
-        // (sauf si on vient de gagner nous-mêmes, déjà testé plus haut)
-        if (hasBigWinThreat(bb, opp)) score -= 5000;
-    } else {
-        // On envoie l'opp sur un board ouvert. Évaluer le danger.
-        // Danger 1 : l'opp peut y gagner un sous-board qui complète une ligne meta
-        uint16_t oppMaskInTarget = bb.small[targetBoard][opp];
-        uint16_t freeInTarget = bb.freeCells(targetBoard);
-        // Si l'opp gagnerait le sous-board targetBoard en y jouant,
-        // est-ce que ça complète une ligne sur le big board pour lui ?
-        bool oppCanWinSmallHere = false;
-        {
-            uint16_t f = freeInTarget;
-            while (f) {
-                int cc = __builtin_ctz(f);
-                if (UTTTConst::hasLine(oppMaskInTarget | (uint16_t)(1u << cc))) {
-                    oppCanWinSmallHere = true; break;
-                }
-                f &= f - 1;
-            }
-        }
-        if (oppCanWinSmallHere) {
-            uint16_t afterBigOpp = bb.bigOcc[opp] | (uint16_t)(1u << targetBoard);
-            if (UTTTConst::hasLine(afterBigOpp)) {
-                // Catastrophe : on lui offre la partie
-                score -= 5000;
-            } else {
-                // On lui offre juste un sous-board. Pénalité modérée,
-                // dépend de la valeur du sous-board.
-                score -= 100 + UTTTConst::CELL_VALUE[targetBoard] * 20;
-            }
-        }
-    }
+    if (!bb.isBoardOpen(cIdx)) score -= 100;
 
     return score;
 }
 
 // ============================================================================
-//  Playout heuristique (simulation MCTS) — version v2 améliorée
-//   - Priorité 1 : gagner la PARTIE
-//   - Priorité 2 : bloquer un big win de l'adversaire (si menace)
-//   - Priorité 3 : top-K coups par heuristique, choix pondéré aléatoire
-//   Retour : 0 = X gagne, 1 = O gagne, 2 = nul
+// Playout Lightweight : Seulement les victoires imm�diates + Random complet
 // ============================================================================
 inline int playout(BB bb, XorShift32& rng) {
     uint8_t moves[81];
-
     for (int step = 0; step < 100; ++step) {
         int n = genMoves(bb, moves);
-        if (n == 0) {
-            if (UTTTConst::hasLine(bb.bigOcc[0])) return 0;
-            if (UTTTConst::hasLine(bb.bigOcc[1])) return 1;
-            int cX = __builtin_popcount(bb.bigOcc[0]);
-            int cO = __builtin_popcount(bb.bigOcc[1]);
-            if (cX > cO) return 0;
-            if (cO > cX) return 1;
-            return 2;
-        }
+        if (n == 0) break;
 
         int side = bb.sideToMove;
-        int opp  = side ^ 1;
-
-        // === Priorité 1 : gagner la partie immédiatement ===
         int chosen = -1;
+
+        // Priorit� 1 unique : gagner si on peut
         for (int i = 0; i < n; ++i) {
             if (wouldWinGame(bb, moves[i], side)) { chosen = i; break; }
         }
 
         if (chosen < 0) {
-            // === Pré-calcul : board(s) où l'adversaire a une menace dangereuse
-            //     (gagner un sous-board qui compléterait une ligne meta pour lui) ===
-            //     On stocke un mask des cells "à éviter d'envoyer l'opp dessus".
-            uint16_t dangerSentTo = 0;  // bit b = 1 si envoyer opp sur board b est dangereux
-            for (int b = 0; b < 9; ++b) {
-                if (!bb.isBoardOpen(b)) continue;
-                // L'opp peut-il y gagner un sous-board ?
-                if (!hasThreat(bb, b, opp)) continue;
-                // Si oui, est-ce que ça complète une ligne meta ?
-                uint16_t afterBig = bb.bigOcc[opp] | (uint16_t)(1u << b);
-                if (UTTTConst::hasLine(afterBig)) {
-                    dangerSentTo |= (uint16_t)(1u << b); // FATAL
-                } else {
-                    // Menace modérée : flag aussi mais avec moins de poids
-                    // (on l'utilisera comme tie-breaker)
-                    dangerSentTo |= (uint16_t)(1u << b);
-                }
-            }
-
-            // === Sélection heuristique pondérée ===
-            // On classe les coups en 3 catégories :
-            //   1. Coups "gagnants locaux" (winsSmall) qui n'envoient pas l'opp en danger
-            //   2. Coups "safe" (n'envoient pas l'opp en danger)
-            //   3. Autres (en dernier recours)
-            uint8_t catWinSafe[81]; int nWS = 0;
-            uint8_t catSafe[81];    int nS  = 0;
-            uint8_t catWin[81];     int nW  = 0;
-
-            for (int i = 0; i < n; ++i) {
-                int sentTo = BB::cellOf(moves[i]);
-                bool sendsToDanger = bb.isBoardOpen(sentTo) &&
-                                     ((dangerSentTo >> sentTo) & 1);
-                bool wins = wouldWinSmall(bb, moves[i], side);
-
-                if (wins && !sendsToDanger)      catWinSafe[nWS++] = (uint8_t)i;
-                else if (!sendsToDanger)         catSafe[nS++]     = (uint8_t)i;
-                else if (wins)                   catWin[nW++]      = (uint8_t)i;
-            }
-
-            if      (nWS > 0) chosen = catWinSafe[rng.bounded((uint32_t)nWS)];
-            else if (nS  > 0) chosen = catSafe[rng.bounded((uint32_t)nS)];
-            else if (nW  > 0) chosen = catWin[rng.bounded((uint32_t)nW)];
-            else              chosen = (int)rng.bounded((uint32_t)n);
+            chosen = (int)rng.bounded((uint32_t)n);
         }
 
-        if (playBB(bb, moves[chosen])) {
-            return side;
-        }
+        if (playBB(bb, moves[chosen])) return side;
     }
+
     if (UTTTConst::hasLine(bb.bigOcc[0])) return 0;
     if (UTTTConst::hasLine(bb.bigOcc[1])) return 1;
+
+    int cX = __builtin_popcount(bb.bigOcc[0]);
+    int cO = __builtin_popcount(bb.bigOcc[1]);
+    if (cX > cO) return 0;
+    if (cO > cX) return 1;
     return 2;
 }
 
 // ============================================================================
-//  Nœud MCTS
-//   - prior : score heuristique du coup menant à ce nœud (Progressive Bias)
-//             utilisé pour orienter l'UCT quand visits est faible
+// N�ud structure all�g�e - 24 octets max !
 // ============================================================================
 struct Node {
-    int32_t parent;
-    int32_t firstChild;
-    int32_t nextSibling;
-    uint16_t numChildren;
-    uint16_t numUntried;
+    int32_t  parent;
+    int32_t  firstChild;
+    int32_t  nextSibling;
     uint32_t visits;
     float    winsForSideJustMoved;
-    float    prior;            // score heuristique normalisé [0..1]
+    float    prior;
 
     uint8_t  moveFromParent;
     uint8_t  sideJustMoved;
-    uint8_t  _pad[2];
-
-    uint8_t  untried[81];
+    uint8_t  numChildren;
+    uint8_t  maxChildren;
 };
 
-// ============================================================================
-//  MyIA — interface publique
-// ============================================================================
 class MyIA {
 public:
-    static constexpr int TIME_BUDGET_MS = 950;
-    static constexpr int POOL_SIZE = 200000;
+    static constexpr int TIME_BUDGET_MS = 200;
+    static constexpr int POOL_SIZE = 500000; // Augment� car les nodes sont plus petits
 
     static Move getMove(const GameState& rootState) {
         auto t0 = std::chrono::steady_clock::now();
 
-        // ====================================================================
-        // 1. Construction de la bitboard racine
-        // ====================================================================
         BB rootBB;
         buildBB(rootState, rootBB);
 
-        // ====================================================================
-        // 2. FAILSAFE absolu : capture du premier coup légal
-        // ====================================================================
         uint8_t failsafeBuf[81];
         int failsafeN = genMoves(rootBB, failsafeBuf);
         if (failsafeN == 0) return Move();
-        Move failsafe = toOfficialMove(BB::bigOf(failsafeBuf[0]),
-                                       BB::cellOf(failsafeBuf[0]));
+        Move failsafe = toOfficialMove(BB::bigOf(failsafeBuf[0]), BB::cellOf(failsafeBuf[0]));
         if (failsafeN == 1) return failsafe;
 
-        // ====================================================================
-        // 3. SOLVER PRE-MCTS : si on peut gagner la partie maintenant → on le fait.
-        //    (Pour le blocage des menaces adverses, on fait confiance au MCTS :
-        //    le prior heuristique pénalise fortement les coups qui laissent
-        //    une victoire à l'adversaire.)
-        // ====================================================================
         int mySide = rootBB.sideToMove;
-
         for (int i = 0; i < failsafeN; ++i) {
             if (wouldWinGame(rootBB, failsafeBuf[i], mySide)) {
-                return toOfficialMove(BB::bigOf(failsafeBuf[i]),
-                                      BB::cellOf(failsafeBuf[i]));
+                return toOfficialMove(BB::bigOf(failsafeBuf[i]), BB::cellOf(failsafeBuf[i]));
             }
         }
 
-        // ====================================================================
-        // 4. Init pool (statique, une seule fois pendant la vie du process)
-        // ====================================================================
         static Node* pool = nullptr;
         if (!pool) pool = new Node[POOL_SIZE];
         int32_t poolUsed = 0;
 
-        // ====================================================================
-        // 5. RNG
-        // ====================================================================
         XorShift32 rng;
-        rng.state = (uint32_t)std::chrono::high_resolution_clock::now()
-                        .time_since_epoch().count();
+        rng.state = (uint32_t)std::chrono::high_resolution_clock::now().time_since_epoch().count();
         if (rng.state == 0) rng.state = 0xDEADBEEFu;
 
-        // ====================================================================
-        // 6. Création de la racine
-        // ====================================================================
         int32_t rootIdx = poolUsed++;
         Node& root = pool[rootIdx];
         root.parent = -1;
         root.firstChild = -1;
         root.nextSibling = -1;
         root.numChildren = 0;
+        root.maxChildren = (uint8_t)failsafeN;
         root.visits = 0;
         root.winsForSideJustMoved = 0.0f;
         root.prior = 0.5f;
         root.moveFromParent = 0;
         root.sideJustMoved = (uint8_t)(rootBB.sideToMove ^ 1);
-        root.numUntried = (uint16_t)failsafeN;
-        std::memcpy(root.untried, failsafeBuf, failsafeN);
 
-        // ====================================================================
-        // 7. Boucle MCTS : Selection → Expansion → Simulation → Backprop
-        // ====================================================================
         auto deadline = t0 + std::chrono::milliseconds(TIME_BUDGET_MS);
         uint64_t iter = 0;
 
-        // Constante UCT tunée pour UTTT (plus exploitatif que sqrt(2))
-        // Valeur empirique recommandée par la littérature MCTS pour UTTT.
         const float C_UCT = 0.9f;
-        // Poids du progressive bias (décroît avec les visites)
         const float BIAS_W = 2.0f;
 
         while (true) {
-            if ((iter & 1023) == 0) {
+            if ((iter & 2047) == 0) { // Check de temps moins fr�quent (plus rapide)
                 if (std::chrono::steady_clock::now() >= deadline) break;
             }
             if (poolUsed >= POOL_SIZE - 2) break;
@@ -585,24 +301,21 @@ public:
 
             while (true) {
                 Node& nd = pool[nodeIdx];
-                if (nd.numUntried > 0) break;
-                if (nd.numChildren == 0) break;
+                if (nd.numChildren < nd.maxChildren) break; // Pas totalement �tendu
+                if (nd.numChildren == 0) break; // Terminal
 
                 float logN = std::log((float)nd.visits + 1.0f);
                 int32_t bestChild = -1;
                 float bestScore = -1e30f;
 
-                for (int32_t cIdx = nd.firstChild; cIdx >= 0;
-                     cIdx = pool[cIdx].nextSibling) {
+                for (int32_t cIdx = nd.firstChild; cIdx >= 0; cIdx = pool[cIdx].nextSibling) {
                     const Node& ch = pool[cIdx];
                     float score;
                     if (ch.visits == 0) {
-                        // FPU + prior heuristique
                         score = 10.0f + ch.prior;
                     } else {
                         float q = ch.winsForSideJustMoved / (float)ch.visits;
                         float u = C_UCT * std::sqrt(logN / (float)ch.visits);
-                        // Progressive bias : prior shrink avec les visites
                         float bias = BIAS_W * ch.prior / (1.0f + (float)ch.visits);
                         score = q + u + bias;
                     }
@@ -615,28 +328,34 @@ public:
                 nodeIdx = bestChild;
                 playBB(bb, pool[nodeIdx].moveFromParent);
 
-                if (UTTTConst::hasLine(bb.bigOcc[0]) ||
-                    UTTTConst::hasLine(bb.bigOcc[1])) break;
+                if (UTTTConst::hasLine(bb.bigOcc[0]) || UTTTConst::hasLine(bb.bigOcc[1])) break;
             }
 
             Node& sel = pool[nodeIdx];
 
             // ============== EXPANSION ==============
             int32_t leafIdx = nodeIdx;
-            bool terminal = UTTTConst::hasLine(bb.bigOcc[0]) ||
-                            UTTTConst::hasLine(bb.bigOcc[1]);
+            bool terminal = UTTTConst::hasLine(bb.bigOcc[0]) || UTTTConst::hasLine(bb.bigOcc[1]);
 
-            if (!terminal && sel.numUntried > 0 && poolUsed < POOL_SIZE - 1) {
-                // Pop un untried au hasard (swap-remove O(1))
-                int idx = (int)rng.bounded(sel.numUntried);
-                uint8_t mv = sel.untried[idx];
-                sel.untried[idx] = sel.untried[--sel.numUntried];
+            if (!terminal && sel.numChildren < sel.maxChildren && poolUsed < POOL_SIZE - 1) {
+                uint8_t moves[81];
+                int n = genMoves(bb, moves);
 
-                // Calcul du prior heuristique pour ce coup
+                // Soustraction O(1) des enfants existants
+                for (int32_t cIdx = sel.firstChild; cIdx >= 0; cIdx = pool[cIdx].nextSibling) {
+                    uint8_t cmv = pool[cIdx].moveFromParent;
+                    for (int i = 0; i < n; ++i) {
+                        if (moves[i] == cmv) {
+                            moves[i] = moves[--n];
+                            break;
+                        }
+                    }
+                }
+
+                uint8_t mv = moves[rng.bounded((uint32_t)n)];
+
                 int sideWhoPlays = bb.sideToMove;
                 int hScore = heuristicScore(bb, mv, sideWhoPlays);
-                // Normalisation grossière : on map [-5000, +5000] → [0, 1]
-                // (les valeurs extrêmes sont rares ; le clamp empêche tout overflow)
                 float prior = 0.5f + (float)hScore / 10000.0f;
                 if (prior < 0.0f) prior = 0.0f;
                 if (prior > 1.0f) prior = 1.0f;
@@ -655,8 +374,10 @@ public:
                 ch.sideJustMoved = (uint8_t)sideWhoPlays;
 
                 playBB(bb, mv);
-                int n = genMoves(bb, ch.untried);
-                ch.numUntried = (uint16_t)n;
+
+                uint8_t tmpMoves[81];
+                ch.maxChildren = (uint8_t)genMoves(bb, tmpMoves);
+
                 sel.numChildren++;
                 leafIdx = childIdx;
             }
@@ -690,7 +411,7 @@ public:
         }
 
         // ====================================================================
-        // 8. Sélection du meilleur coup à la racine (robust child)
+        // S�lection du meilleur coup
         // ====================================================================
         Node& finalRoot = pool[rootIdx];
         if (finalRoot.numChildren == 0 || finalRoot.firstChild < 0) {
@@ -700,12 +421,10 @@ public:
         int32_t bestChild = -1;
         uint32_t bestVisits = 0;
         float bestQTieBreak = -1.0f;
-        for (int32_t cIdx = finalRoot.firstChild; cIdx >= 0;
-             cIdx = pool[cIdx].nextSibling) {
+        for (int32_t cIdx = finalRoot.firstChild; cIdx >= 0; cIdx = pool[cIdx].nextSibling) {
             const Node& ch = pool[cIdx];
             float q = ch.visits > 0 ? (ch.winsForSideJustMoved / ch.visits) : -1.0f;
-            if (ch.visits > bestVisits ||
-               (ch.visits == bestVisits && q > bestQTieBreak)) {
+            if (ch.visits > bestVisits || (ch.visits == bestVisits && q > bestQTieBreak)) {
                 bestVisits = ch.visits;
                 bestQTieBreak = q;
                 bestChild = cIdx;

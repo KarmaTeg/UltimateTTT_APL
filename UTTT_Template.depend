@@ -30,7 +30,7 @@
 1777395480 source:c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\ultimateboard.cpp
 	"UltimateBoard.h"
 
-1779278715 source:c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\main.cpp
+1779282009 source:c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\main.cpp
 	"main.h"
 	"GameBoard.h"
 	"GameRules.h"
@@ -47,7 +47,7 @@
 	"GameBoard.h"
 	<vector>
 
-1779279895 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\myia.h
+1779284401 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\myia.h
 	"GameBoard.h"
 	"GameRules.h"
 	<cmath>
