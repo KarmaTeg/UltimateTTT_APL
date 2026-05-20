@@ -47,11 +47,11 @@
 	"GameBoard.h"
 	<vector>
 
-1779205165 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\myia.h
+1779278436 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\myia.h
 	"GameBoard.h"
 	"GameRules.h"
-	<cmath>
 	<chrono>
 	<cstdint>
-	<vector>
+	<cstring>
+	<cmath>
 
