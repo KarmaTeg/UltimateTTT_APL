@@ -1,0 +1,57 @@
+# depslib dependency file v1.0
+1777395502 source:c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\randomplayer.cpp
+	"RandomPlayer.h"
+	<vector>
+	<cstdlib>
+	<ctime>
+
+1777395493 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\randomplayer.h
+	"Player.h"
+
+1777399485 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\player.h
+	"UltimateBoard.h"
+	<string>
+
+1777395474 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\ultimateboard.h
+	"SubGrid.h"
+	"Move.h"
+	<vector>
+
+1777395460 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\subgrid.h
+	"Common.h"
+
+1777395446 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\common.h
+
+1777395453 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\move.h
+
+1777395466 source:c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\subgrid.cpp
+	"SubGrid.h"
+
+1777395480 source:c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\ultimateboard.cpp
+	"UltimateBoard.h"
+
+1779199151 source:c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\main.cpp
+	"main.h"
+	"GameBoard.h"
+	"GameRules.h"
+	"MyIA.h"
+	<iostream>
+
+1779104591 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\main.h
+	<string>
+
+1779104591 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\gameboard.h
+	"main.h"
+
+1779104591 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\gamerules.h
+	"GameBoard.h"
+	<vector>
+
+1779205165 c:\users\louis\onedrive - de vinci\c++\projet final\ultimatettt_apl\myia.h
+	"GameBoard.h"
+	"GameRules.h"
+	<cmath>
+	<chrono>
+	<cstdint>
+	<vector>
+

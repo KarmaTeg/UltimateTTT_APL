@@ -7,7 +7,7 @@
 int main()
 {
     // Start 10 games against EASY_1 in DEBUG mode
-    game.initialize(10, Level::EASY_1, Mode::ARENA, false, "YourPseudo");
+    game.initialize(10, Level::MEDIUM_1, Mode::DEBUG, false, "YourPseudo");
 
     while (!game.isAllGameFinish())  // repeat until all 10 games are done
     {

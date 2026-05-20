@@ -39,6 +39,7 @@
 		</Linker>
 		<Unit filename="Common.h" />
 		<Unit filename="Move.h" />
+		<Unit filename="MyIA.h" />
 		<Unit filename="Player.h" />
 		<Unit filename="RandomPlayer.cpp" />
 		<Unit filename="RandomPlayer.h" />
