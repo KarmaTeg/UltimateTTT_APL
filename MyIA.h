@@ -239,8 +239,8 @@ struct Node {
 
 class MyIA {
 public:
-    static constexpr int TIME_BUDGET_MS = 200;
-    static constexpr int POOL_SIZE = 500000; // Augmenté car les nodes sont plus petits
+    static constexpr int TIME_BUDGET_MS = 180;
+    static constexpr int POOL_SIZE = 50000000; // Augmenté car les nodes sont plus petits
 
     static Move getMove(const GameState& rootState) {
         auto t0 = std::chrono::steady_clock::now();
