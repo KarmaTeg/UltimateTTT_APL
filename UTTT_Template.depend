@@ -55,3 +55,28 @@
 	<cstdint>
 	<cstring>
 
+1779455185 source:c:\esilv a3\semestre 2\poo\projet\ultimatettt_apl\main.cpp
+	"main.h"
+	"GameBoard.h"
+	"GameRules.h"
+	"MyIA.h"
+	<iostream>
+
+1777714306 c:\esilv a3\semestre 2\poo\projet\ultimatettt_apl\main.h
+	<string>
+
+1779455185 c:\esilv a3\semestre 2\poo\projet\ultimatettt_apl\gameboard.h
+	"main.h"
+
+1779455185 c:\esilv a3\semestre 2\poo\projet\ultimatettt_apl\gamerules.h
+	"GameBoard.h"
+	<vector>
+
+1779459910 c:\esilv a3\semestre 2\poo\projet\ultimatettt_apl\myia.h
+	"GameBoard.h"
+	"GameRules.h"
+	<cmath>
+	<chrono>
+	<cstdint>
+	<cstring>
+
